@@ -1,0 +1,20 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# If this ever moves to a Vite build (see SPEC.md §2)
+# node_modules/
+# dist/
+# .env
+# .env.local
+
+# If Pages Functions / Wrangler get added later
+# .wrangler/
+# .dev.vars

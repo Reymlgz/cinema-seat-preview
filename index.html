@@ -1,0 +1,1039 @@
+<!--
+  CineView — an interactive 3D cinema seat preview POC.
+  Pick a seat, fly into a first-person view of the screen from that seat.
+  Single self-contained file. Three.js r128 + GSAP from CDN. No imported models.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CineView — Experience Every Seat</title>
+    <meta
+      name="description"
+      content="Explore a cinema auditorium in 3D and preview the screen from any seat before you buy."
+    />
+    <meta name="theme-color" content="#08090d" />
+    <style>
+      :root {
+        --bg: #08090d;
+        --panel: #12141c;
+        --panel-2: #191c27;
+        --ink: #f2f3f7;
+        --dim: #9aa0b4;
+        --line: #262a38;
+        --gold: #e7c15a;
+        --red: #e0483d;
+        --green: #37d67a;
+        --blue: #5b8cff;
+        --radius: 14px;
+        --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto,
+          "Helvetica Neue", sans-serif;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        font-family: var(--font);
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+        user-select: none;
+      }
+      #c { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+      #c.dragging { cursor: grabbing; }
+      #c.seatmode { cursor: ns-resize; }
+
+      /* ---------- top bar ---------- */
+      #topbar {
+        position: fixed; top: 0; left: 0; right: 0;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 20px; z-index: 20; pointer-events: none;
+      }
+      .brand { display: flex; align-items: baseline; gap: 10px; pointer-events: auto; }
+      .brand b { font-size: 20px; letter-spacing: 0.5px; font-weight: 800; }
+      .brand b span { color: var(--gold); }
+      .brand small { color: var(--dim); font-size: 12px; letter-spacing: 0.3px; }
+      .badge {
+        pointer-events: auto;
+        font-size: 11px; color: var(--dim); border: 1px solid var(--line);
+        padding: 5px 10px; border-radius: 999px; background: rgba(18,20,28,0.6);
+        backdrop-filter: blur(6px);
+      }
+
+      /* ---------- info panel ---------- */
+      #panel {
+        position: fixed; right: 18px; bottom: 18px; width: 320px; z-index: 20;
+        background: rgba(18,20,28,0.82); border: 1px solid var(--line);
+        border-radius: var(--radius); overflow: hidden; backdrop-filter: blur(10px);
+        box-shadow: 0 18px 40px rgba(0,0,0,0.5);
+        transition: opacity 0.4s ease, transform 0.4s ease;
+      }
+      #panel.hidden { opacity: 0; transform: translateY(24px); pointer-events: none; }
+      #p-thumb { position: relative; width: 100%; aspect-ratio: 16/10; background: #05060a; overflow: hidden; }
+      #p-thumb img { width: 100%; height: 100%; object-fit: cover; display: none; }
+      #p-thumb img.ready { display: block; }
+      #p-ph {
+        position: absolute; inset: 0; display: grid; place-items: center;
+        color: var(--dim); font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase;
+      }
+      #p-tag {
+        position: absolute; top: 10px; left: 10px; font-size: 10px; font-weight: 700;
+        letter-spacing: 0.6px; text-transform: uppercase; padding: 4px 8px; border-radius: 6px;
+        background: rgba(8,9,13,0.7); color: var(--gold); border: 1px solid rgba(231,193,90,0.35);
+      }
+      #p-body { padding: 14px 16px 16px; }
+      #p-loc { font-size: 20px; font-weight: 800; letter-spacing: 0.3px; }
+      #p-tier { font-size: 12px; color: var(--dim); margin-top: 2px; }
+      #p-row { display: flex; align-items: flex-end; justify-content: space-between; margin-top: 14px; }
+      #p-price { font-size: 26px; font-weight: 800; }
+      #p-price .u { font-size: 12px; color: var(--dim); font-weight: 600; }
+      #p-score { text-align: right; }
+      #p-score .n { font-size: 22px; font-weight: 800; }
+      #p-score .l { font-size: 11px; color: var(--dim); }
+      .meter { height: 6px; border-radius: 4px; background: var(--panel-2); margin-top: 12px; overflow: hidden; }
+      .meter > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg,var(--red),var(--gold),var(--green)); transition: width 0.4s ease; }
+      #p-actions { display: flex; gap: 8px; margin-top: 14px; }
+      button.act {
+        flex: 1; cursor: pointer; font-family: inherit; font-weight: 700; font-size: 13px;
+        padding: 11px 12px; border-radius: 10px; border: 1px solid var(--line);
+        background: var(--panel-2); color: var(--ink); transition: transform 0.1s, background 0.2s, opacity 0.2s;
+      }
+      button.act:hover { background: #222634; }
+      button.act:active { transform: translateY(1px); }
+      button.act.primary { background: var(--gold); color: #1a1406; border-color: var(--gold); }
+      button.act.primary:hover { filter: brightness(1.05); }
+      button.act:disabled { opacity: 0.4; cursor: not-allowed; }
+
+      /* ---------- left controls / legend ---------- */
+      #legend {
+        position: fixed; left: 18px; bottom: 18px; z-index: 20;
+        background: rgba(18,20,28,0.82); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 12px 14px; backdrop-filter: blur(10px);
+        font-size: 12px; color: var(--dim); max-width: 220px;
+      }
+      #legend h4 { color: var(--ink); font-size: 12px; letter-spacing: 0.4px; text-transform: uppercase; margin-bottom: 8px; }
+      .lg { display: flex; align-items: center; gap: 8px; margin: 5px 0; }
+      .sw { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+      #mini { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; display: block; background: #05060a; }
+      #legend .hint { margin-top: 8px; font-size: 11px; line-height: 1.5; }
+      #legend kbd { font-family: var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 10px; color: var(--ink); }
+
+      /* ---------- back pill (seat mode) ---------- */
+      #backbar {
+        position: fixed; top: 16px; left: 50%; transform: translate(-50%, -80px); z-index: 30;
+        display: flex; gap: 8px; align-items: center; opacity: 0; transition: transform 0.4s ease, opacity 0.4s ease;
+      }
+      #backbar.show { transform: translate(-50%, 0); opacity: 1; }
+      #backbar button {
+        cursor: pointer; font-family: inherit; font-weight: 700; font-size: 13px; color: var(--ink);
+        padding: 10px 16px; border-radius: 999px; border: 1px solid var(--line);
+        background: rgba(18,20,28,0.9); backdrop-filter: blur(8px);
+      }
+      #backbar button:hover { background: #222634; }
+
+      /* ---------- tooltip ---------- */
+      #tip {
+        position: fixed; z-index: 40; pointer-events: none; opacity: 0; transform: translate(-50%, -140%);
+        background: rgba(8,9,13,0.92); border: 1px solid var(--line); border-radius: 8px;
+        padding: 6px 10px; font-size: 12px; white-space: nowrap; transition: opacity 0.12s;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+      }
+      #tip b { color: var(--gold); }
+
+      /* ---------- toast ---------- */
+      #toast {
+        position: fixed; bottom: 26px; left: 50%; transform: translate(-50%, 40px); z-index: 40;
+        background: rgba(8,9,13,0.94); border: 1px solid var(--line); border-radius: 999px;
+        padding: 10px 18px; font-size: 13px; opacity: 0; transition: opacity 0.3s, transform 0.3s; pointer-events: none;
+      }
+      #toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+      /* ---------- loader ---------- */
+      #loader {
+        position: fixed; inset: 0; z-index: 60; background: var(--bg);
+        display: grid; place-items: center; transition: opacity 0.6s ease;
+      }
+      #loader.hide { opacity: 0; pointer-events: none; }
+      #loader .box { text-align: center; }
+      #loader .box b { font-size: 26px; font-weight: 800; letter-spacing: 0.5px; }
+      #loader .box b span { color: var(--gold); }
+      #loader .box p { color: var(--dim); font-size: 13px; margin-top: 10px; }
+      .spin { margin: 22px auto 0; width: 30px; height: 30px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--gold); animation: sp 0.8s linear infinite; }
+      @keyframes sp { to { transform: rotate(360deg); } }
+
+      /* ---------- footer ---------- */
+      #footer {
+        position: fixed; left: 50%; bottom: 6px; transform: translateX(-50%); z-index: 15;
+        font-size: 11.5px; color: var(--dim); letter-spacing: 0.2px; pointer-events: none;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+      }
+      #footer a { color: var(--gold); text-decoration: none; pointer-events: auto; font-weight: 600; }
+      #footer a:hover { text-decoration: underline; }
+      #footer .heart { color: var(--red); }
+
+      @media (max-width: 640px) {
+        #panel { width: calc(100% - 24px); right: 12px; bottom: 46px; }
+        #legend { display: none; }
+        #footer { bottom: 4px; }
+      }
+      @media (prefers-reduced-motion: reduce) { .spin { animation-duration: 2s; } }
+    </style>
+  </head>
+  <body>
+    <canvas id="c"></canvas>
+
+    <div id="topbar">
+      <div class="brand">
+        <b>Cine<span>View</span></b>
+        <small>Experience every seat</small>
+      </div>
+      <div class="badge">Concept demo · seats and prices are simulated</div>
+    </div>
+
+    <div id="backbar">
+      <button id="bk-exit">← Back to auditorium</button>
+    </div>
+
+    <div id="legend">
+      <h4>Auditorium</h4>
+      <div class="lg"><span class="sw" style="background:#8a2b2b"></span> Standard</div>
+      <div class="lg"><span class="sw" style="background:#b8863b"></span> Premium</div>
+      <div class="lg"><span class="sw" style="background:#3b6db8"></span> Premium Plus</div>
+      <div class="lg"><span class="sw" style="background:#2a2d38"></span> Sold</div>
+      <canvas id="mini" width="204" height="150"></canvas>
+      <div class="hint">Drag to orbit · scroll to zoom · click a seat to preview it. <kbd>Esc</kbd> to exit.</div>
+    </div>
+
+    <div id="panel">
+      <div id="p-thumb">
+        <span id="p-tag">Recommended</span>
+        <img id="p-img" alt="View of the screen from this seat" />
+        <div id="p-ph">Preparing view…</div>
+      </div>
+      <div id="p-body">
+        <div id="p-loc">Row J · Seat 11</div>
+        <div id="p-tier">Premium · centre block</div>
+        <div id="p-row">
+          <div id="p-price">$18.50<span class="u"> / seat</span></div>
+          <div id="p-score"><div class="n">—</div><div class="l">view score</div></div>
+        </div>
+        <div class="meter"><i id="p-meter"></i></div>
+        <div id="p-actions">
+          <button class="act" id="p-suggest">Best seat</button>
+          <button class="act primary" id="p-grab">Select seat</button>
+        </div>
+      </div>
+    </div>
+
+    <footer id="footer">
+      Made with <span class="heart">♥</span> by <a href="https://x.com/reymlgz">Rey Molina</a>.
+    </footer>
+
+    <div id="tip"></div>
+    <div id="toast"></div>
+
+    <div id="loader">
+      <div class="box">
+        <b>Cine<span>View</span></b>
+        <p id="loader-msg">Building the auditorium…</p>
+        <div class="spin"></div>
+      </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+    <script>
+      "use strict";
+      /* ============================================================
+         CineView — procedural 3D cinema seat preview
+         Single file. Three.js r128 + GSAP. No imported models.
+         ============================================================ */
+      const REDUCED = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      const TAU = Math.PI * 2;
+      const $ = (id) => document.getElementById(id);
+
+      /* ---------- deterministic rng ---------- */
+      function mulberry32(a) {
+        return function () {
+          a |= 0; a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      const rng = mulberry32(20260727);
+
+      /* ---------- renderer / scene / camera ---------- */
+      const canvas = $("c");
+      const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+      renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
+      renderer.setSize(innerWidth, innerHeight);
+      renderer.setClearColor(0x05060a, 1);
+
+      const scene = new THREE.Scene();
+      scene.fog = new THREE.Fog(0x05060a, 40, 130);
+
+      const camera = new THREE.PerspectiveCamera(58, innerWidth / innerHeight, 0.1, 500);
+
+      /* ---------- room config ---------- */
+      const ROOM = {
+        rows: 14,
+        seatsPerRow: 22,
+        seatW: 0.95,
+        rowDepth: 1.2,
+        firstRowZ: -13,
+        floorY: 0.5,
+        rake: 0.42,
+        curve: 0.012,
+      };
+      const SCREEN = { w: 22, h: 9.2, cx: 0, cy: 5.6, cz: -18, tilt: -0.05 };
+      const screenCenter = new THREE.Vector3(SCREEN.cx, SCREEN.cy, SCREEN.cz);
+
+      /* ---------- canvas texture helper ---------- */
+      function canvasTexture(w, h, draw) {
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        draw(cv.getContext("2d"), w, h);
+        const t = new THREE.CanvasTexture(cv);
+        t.anisotropy = 4;
+        return t;
+      }
+
+      /* ---------- lights (screen is the main source) ---------- */
+      scene.add(new THREE.AmbientLight(0x2a3350, 0.55));
+      const screenLight = new THREE.PointLight(0xbcd0ff, 1.1, 70, 2);
+      screenLight.position.set(0, 6, -14);
+      scene.add(screenLight);
+      const backFill = new THREE.PointLight(0x3a2f5a, 0.5, 90, 2);
+      backFill.position.set(0, 14, 12);
+      scene.add(backFill);
+      const hemi = new THREE.HemisphereLight(0x33406a, 0x0a0a10, 0.35);
+      scene.add(hemi);
+
+      /* ---------- the screen (reference image + translucent label) ---------- */
+      const screenCanvas = document.createElement("canvas");
+      screenCanvas.width = 640; screenCanvas.height = 268;
+      const sctx = screenCanvas.getContext("2d");
+      const screenTex = new THREE.CanvasTexture(screenCanvas);
+      const refImg = new Image();
+      let refReady = false;
+      refImg.onload = () => {
+        refReady = true;
+        drawScreen();
+        // refresh the POV thumbnail now that the screen shows the real image
+        if (typeof captureView === "function" && selectedIdx >= 0) captureView(selectedIdx);
+      };
+      refImg.src = "references/images/the-odyssey-trailer-still.jpg"; // same-origin, no CORS taint
+      function drawScreen() {
+        const w = screenCanvas.width, h = screenCanvas.height;
+        sctx.fillStyle = "#05060a"; sctx.fillRect(0, 0, w, h);
+        if (refReady) {
+          // cover-fit the image so it fills the screen
+          const scale = Math.max(w / refImg.width, h / refImg.height);
+          const dw = refImg.width * scale, dh = refImg.height * scale;
+          sctx.drawImage(refImg, (w - dw) / 2, (h - dh) / 2, dw, dh);
+        } else {
+          const g = sctx.createLinearGradient(0, 0, 0, h);
+          g.addColorStop(0, "#1a2135"); g.addColorStop(1, "#0a0d16");
+          sctx.fillStyle = g; sctx.fillRect(0, 0, w, h);
+        }
+        // subtle vignette
+        const v = sctx.createRadialGradient(w / 2, h / 2, h * 0.25, w / 2, h / 2, w * 0.72);
+        v.addColorStop(0, "rgba(0,0,0,0)"); v.addColorStop(1, "rgba(0,0,0,0.4)");
+        sctx.fillStyle = v; sctx.fillRect(0, 0, w, h);
+        // translucent label over the top so the image shows through
+        const bandH = 56;
+        const band = sctx.createLinearGradient(0, 0, 0, bandH);
+        band.addColorStop(0, "rgba(0,0,0,0.45)"); band.addColorStop(1, "rgba(0,0,0,0)");
+        sctx.fillStyle = band; sctx.fillRect(0, 0, w, bandH);
+        sctx.font = "bold 30px -apple-system, sans-serif";
+        sctx.textAlign = "center";
+        sctx.textBaseline = "middle";
+        sctx.fillStyle = "rgba(255,255,255,0.62)"; // semi-transparent: image visible through the text
+        sctx.shadowColor = "rgba(0,0,0,0.6)"; sctx.shadowBlur = 6;
+        sctx.fillText("REFERENCE IMAGE", w / 2, 30);
+        sctx.shadowBlur = 0; sctx.textBaseline = "alphabetic";
+        screenTex.needsUpdate = true;
+      }
+      drawScreen();
+      const screenMat = new THREE.MeshBasicMaterial({ map: screenTex, fog: false });
+      const screenMesh = new THREE.Mesh(new THREE.PlaneGeometry(SCREEN.w, SCREEN.h), screenMat);
+      screenMesh.position.copy(screenCenter);
+      screenMesh.rotation.x = SCREEN.tilt;
+      scene.add(screenMesh);
+      // screen frame / masking
+      const frame = new THREE.Mesh(
+        new THREE.PlaneGeometry(SCREEN.w + 1.6, SCREEN.h + 1.4),
+        new THREE.MeshBasicMaterial({ color: 0x0a0a0e })
+      );
+      frame.position.set(SCREEN.cx, SCREEN.cy, SCREEN.cz - 0.2);
+      frame.rotation.x = SCREEN.tilt;
+      scene.add(frame);
+
+      /* ---------- room shell: floor steps, walls, ceiling ---------- */
+      const carpetTex = canvasTexture(128, 128, (x, w, h) => {
+        x.fillStyle = "#171019"; x.fillRect(0, 0, w, h);
+        for (let i = 0; i < 900; i++) {
+          x.fillStyle = `rgba(${90 + Math.random() * 30 | 0},${20 + Math.random() * 20 | 0},${40 + Math.random() * 30 | 0},0.5)`;
+          x.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+        }
+      });
+      carpetTex.wrapS = carpetTex.wrapT = THREE.RepeatWrapping;
+      carpetTex.repeat.set(8, 10);
+      const carpetMat = new THREE.MeshLambertMaterial({ map: carpetTex, color: 0x6a5568 });
+
+      // stepped floor: one thin platform per row
+      {
+        const stepW = ROOM.seatsPerRow * ROOM.seatW + 6;
+        for (let r = 0; r < ROOM.rows; r++) {
+          const z = ROOM.firstRowZ + r * ROOM.rowDepth;
+          const y = ROOM.floorY + r * ROOM.rake;
+          const step = new THREE.Mesh(new THREE.BoxGeometry(stepW, 0.5, ROOM.rowDepth + 0.05), carpetMat);
+          step.position.set(0, y - 0.25, z);
+          scene.add(step);
+        }
+        // front apron down to the screen
+        const apron = new THREE.Mesh(new THREE.BoxGeometry(stepW, 0.5, 9), carpetMat);
+        apron.position.set(0, ROOM.floorY - 0.25, ROOM.firstRowZ - 5);
+        scene.add(apron);
+      }
+
+      // walls (warm fluted acoustic panels) + ceiling + back wall
+      const panelTex = canvasTexture(256, 256, (x, w, h) => {
+        x.fillStyle = "#2a1417"; x.fillRect(0, 0, w, h);
+        // vertical fluted acoustic battens with relief shading
+        const flutes = 14, fw = w / flutes;
+        for (let i = 0; i < flutes; i++) {
+          const gx = x.createLinearGradient(i * fw, 0, (i + 1) * fw, 0);
+          gx.addColorStop(0, "#180a0c");
+          gx.addColorStop(0.5, "#3d1e22");
+          gx.addColorStop(1, "#180a0c");
+          x.fillStyle = gx;
+          x.fillRect(i * fw + 1, 0, fw - 2, h);
+          x.fillStyle = "rgba(0,0,0,0.55)";
+          x.fillRect(i * fw, 0, 1.5, h); // groove
+        }
+        // horizontal panel seams
+        x.fillStyle = "rgba(0,0,0,0.4)";
+        x.fillRect(0, h / 2 - 1, w, 2);
+        // fabric speckle
+        for (let k = 0; k < 2600; k++) {
+          x.fillStyle = `rgba(${150 + Math.random() * 50 | 0},${55 + Math.random() * 35 | 0},${60 + Math.random() * 35 | 0},0.05)`;
+          x.fillRect(Math.random() * w, Math.random() * h, 1.5, 1.5);
+        }
+      });
+      panelTex.wrapS = panelTex.wrapT = THREE.RepeatWrapping;
+      panelTex.repeat.set(9, 3);
+      // Phong so the walls receive per-pixel spotlight pools (Lambert is per-vertex and can't show them)
+      const wallMat = new THREE.MeshPhongMaterial({ map: panelTex, color: 0xa8735a, shininess: 6, specular: 0x120a08 });
+      const roomLen = 42, roomW = ROOM.seatsPerRow * ROOM.seatW + 10, roomH = 18;
+      const wallGeoL = new THREE.PlaneGeometry(roomLen, roomH);
+      const wallL = new THREE.Mesh(wallGeoL, wallMat);
+      wallL.position.set(-roomW / 2, roomH / 2 - 2, -2); wallL.rotation.y = Math.PI / 2;
+      scene.add(wallL);
+      const wallR = wallL.clone(); wallR.position.x = roomW / 2; wallR.rotation.y = -Math.PI / 2;
+      scene.add(wallR);
+      const backWall = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomH), wallMat);
+      backWall.position.set(0, roomH / 2 - 2, ROOM.firstRowZ + ROOM.rows * ROOM.rowDepth + 1);
+      backWall.rotation.y = Math.PI;
+      scene.add(backWall);
+
+      // ---- side-wall lamps: golden sconce fixture + upward glow + spotlight ----
+      {
+        const backZ = ROOM.firstRowZ + ROOM.rows * ROOM.rowDepth;
+        const zStart = SCREEN.cz + 5, zEnd = backZ - 2, span = zEnd - zStart;
+        const LAMP_Y = 7.5;
+        // golden radial glow (additive) — makes the lamp look like it emits light onto the wall
+        const glowTexGold = canvasTexture(96, 160, (x, w, h) => {
+          const g = x.createRadialGradient(w / 2, h * 0.6, 2, w / 2, h * 0.6, w * 0.62);
+          g.addColorStop(0, "rgba(255,214,140,0.95)");
+          g.addColorStop(0.35, "rgba(255,180,85,0.4)");
+          g.addColorStop(1, "rgba(255,150,55,0)");
+          x.fillStyle = g; x.fillRect(0, 0, w, h);
+        });
+        const glowMat = new THREE.MeshBasicMaterial({ map: glowTexGold, transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, fog: false });
+        const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xffd189, fog: false }); // the golden lamp itself
+        const plateMat = new THREE.MeshPhongMaterial({ color: 0x1a1210, shininess: 8 });
+        const N = 5; // lamps per wall
+        for (let side = -1; side <= 1; side += 2) {
+          const wallX = side * (roomW / 2);
+          const rotY = side > 0 ? -Math.PI / 2 : Math.PI / 2;
+          for (let n = 0; n < N; n++) {
+            const z = zStart + (span * (n + 0.5)) / N;
+            // dark backing plate
+            const plate = new THREE.Mesh(new THREE.PlaneGeometry(0.44, 1.4), plateMat);
+            plate.position.set(side * (roomW / 2 - 0.09), LAMP_Y, z); plate.rotation.y = rotY;
+            scene.add(plate);
+            // the golden lamp fixture (small bright bar)
+            const fixture = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 1.0), fixtureMat);
+            fixture.position.set(side * (roomW / 2 - 0.06), LAMP_Y, z); fixture.rotation.y = rotY;
+            scene.add(fixture);
+            // additive glow biased UPWARD (the fan of light a wall lamp throws up the wall)
+            const glow = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 6.4), glowMat);
+            glow.position.set(side * (roomW / 2 - 0.05), LAMP_Y + 1.4, z); glow.rotation.y = rotY;
+            scene.add(glow);
+            // golden spotlight aimed UP the wall for real cast light
+            const foco = new THREE.SpotLight(0xffb84a, 3.2, 13, 0.62, 0.9, 1.6);
+            foco.position.set(side * (roomW / 2 - 0.9), LAMP_Y, z);
+            foco.target.position.set(wallX - side * 0.02, LAMP_Y + 4.2, z);
+            scene.add(foco);
+            scene.add(foco.target);
+          }
+        }
+      }
+      const ceiling = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomLen), new THREE.MeshLambertMaterial({ color: 0x0c0d14 }));
+      ceiling.position.set(0, roomH - 2, -2); ceiling.rotation.x = Math.PI / 2;
+      scene.add(ceiling);
+      // screen wall behind the screen
+      const screenWall = new THREE.Mesh(new THREE.PlaneGeometry(roomW, roomH), new THREE.MeshLambertMaterial({ color: 0x090a10 }));
+      screenWall.position.set(0, roomH / 2 - 2, SCREEN.cz - 1);
+      scene.add(screenWall);
+
+      // ceiling downlights
+      for (let i = -1; i <= 1; i++) {
+        for (let j = -1; j <= 1; j++) {
+          const dl = new THREE.Mesh(new THREE.CircleGeometry(0.35, 12), new THREE.MeshBasicMaterial({ color: 0x556089 }));
+          dl.position.set(i * 7, roomH - 2.05, -2 + j * 12); dl.rotation.x = Math.PI / 2;
+          scene.add(dl);
+        }
+      }
+      // aisle strip lights (dim warm white) + EXIT signs
+      const stripMat = new THREE.MeshBasicMaterial({ color: 0x6a5a44, fog: false });
+      for (let side = -1; side <= 1; side += 2) {
+        const strip = new THREE.Mesh(new THREE.PlaneGeometry(0.12, roomLen - 6), stripMat);
+        strip.position.set(side * (roomW / 2 - 1.2), 0.2, -2); strip.rotation.x = -Math.PI / 2;
+        scene.add(strip);
+      }
+      // EXIT sign with the label drawn on a canvas texture
+      const exitTex = canvasTexture(256, 100, (x, w, h) => {
+        x.fillStyle = "#b5771f"; x.fillRect(0, 0, w, h);
+        x.fillStyle = "#8a5a15"; x.fillRect(0, 0, w, 6); x.fillRect(0, h - 6, w, 6);
+        x.fillStyle = "#fff3dc";
+        x.font = "bold 58px -apple-system, sans-serif";
+        x.textAlign = "center"; x.textBaseline = "middle";
+        x.fillText("EXIT", w / 2, h / 2 + 2);
+      });
+      const exitMat = new THREE.MeshBasicMaterial({ map: exitTex, fog: false });
+      function exitSign(x, z) {
+        const s = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.55), exitMat);
+        s.position.set(x, 2.4, z); s.lookAt(0, 2.4, 0);
+        scene.add(s);
+      }
+      exitSign(-roomW / 2 + 0.5, SCREEN.cz + 5);
+      exitSign(roomW / 2 - 0.5, SCREEN.cz + 5);
+
+      /* ---------- tiers (by row band) ---------- */
+      function tierOf(row) {
+        if (row <= 3) return 0;         // Standard (front)
+        if (row >= ROOM.rows - 4) return 2; // Recliner (back)
+        return 1;                        // Premium (middle)
+      }
+      const TIER = [
+        { name: "Standard", base: 12.5, color: 0x8a2b2b },
+        { name: "Premium", base: 18.5, color: 0xb8863b },
+        { name: "Premium Plus", base: 24.5, color: 0x3b6db8 },
+      ];
+      const ROW_LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+      /* ---------- seat geometry (merged boxes) ---------- */
+      function mergeBoxes(parts) {
+        const pos = [], nor = [];
+        parts.forEach((g) => {
+          const gg = g.index ? g.toNonIndexed() : g;
+          const p = gg.attributes.position.array, n = gg.attributes.normal.array;
+          for (let i = 0; i < p.length; i++) pos.push(p[i]);
+          for (let i = 0; i < n.length; i++) nor.push(n[i]);
+        });
+        const out = new THREE.BufferGeometry();
+        out.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+        out.setAttribute("normal", new THREE.Float32BufferAttribute(nor, 3));
+        return out;
+      }
+      const seatGeo = (() => {
+        const cushion = new THREE.BoxGeometry(0.78, 0.16, 0.62); cushion.translate(0, 0.46, 0.05);
+        const back = new THREE.BoxGeometry(0.78, 0.72, 0.14); back.rotateX(0.12); back.translate(0, 0.86, 0.3);
+        const ped = new THREE.BoxGeometry(0.66, 0.42, 0.5); ped.translate(0, 0.2, 0.05);
+        const armL = new THREE.BoxGeometry(0.1, 0.12, 0.56); armL.translate(-0.42, 0.6, 0.05);
+        const armR = new THREE.BoxGeometry(0.1, 0.12, 0.56); armR.translate(0.42, 0.6, 0.05);
+        return mergeBoxes([cushion, back, ped, armL, armR]);
+      })();
+      const seatMat = new THREE.MeshPhongMaterial({ shininess: 22, specular: 0x222630 });
+
+      /* ---------- count + allocate ---------- */
+      const SEAT_COUNT = ROOM.rows * ROOM.seatsPerRow;
+      const seatMesh = new THREE.InstancedMesh(seatGeo, seatMat, SEAT_COUNT);
+      seatMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(SEAT_COUNT * 3), 3);
+      seatMesh.frustumCulled = false;
+
+      // pick mesh (unique id color per seat)
+      const pickGeo = new THREE.BoxGeometry(0.85, 1.35, 0.85); pickGeo.translate(0, 0.6, 0.05);
+      const pickColAttr = new THREE.InstancedBufferAttribute(new Float32Array(SEAT_COUNT * 3), 3);
+      pickGeo.setAttribute("pickColor", pickColAttr);
+      const pickMesh = new THREE.InstancedMesh(
+        pickGeo,
+        new THREE.ShaderMaterial({
+          vertexShader:
+            "attribute vec3 pickColor; varying vec3 vP;\n" +
+            "void main(){ vP=pickColor; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position,1.0); }",
+          fragmentShader: "varying vec3 vP; void main(){ gl_FragColor=vec4(vP,1.0); }",
+        }),
+        SEAT_COUNT
+      );
+      pickMesh.frustumCulled = false;
+      const pickScene = new THREE.Scene();
+      pickScene.add(pickMesh);
+
+      const meta = {
+        pos: new Float32Array(SEAT_COUNT * 3),
+        yaw: new Float32Array(SEAT_COUNT),
+        row: new Uint8Array(SEAT_COUNT),
+        seat: new Uint8Array(SEAT_COUNT),
+        tier: new Uint8Array(SEAT_COUNT),
+        avail: new Uint8Array(SEAT_COUNT),
+      };
+      const baseColors = new Float32Array(SEAT_COUNT * 3);
+
+      /* ---------- fill seats ---------- */
+      {
+        const dummy = new THREE.Object3D();
+        const col = new THREE.Color();
+        let idx = 0;
+        for (let r = 0; r < ROOM.rows; r++) {
+          const z0 = ROOM.firstRowZ + r * ROOM.rowDepth;
+          const y = ROOM.floorY + r * ROOM.rake;
+          const tier = tierOf(r);
+          for (let s = 0; s < ROOM.seatsPerRow; s++) {
+            const x = (s - (ROOM.seatsPerRow - 1) / 2) * ROOM.seatW;
+            const z = z0 + ROOM.curve * x * x; // gentle curve, ends pull back
+            const yaw = Math.atan2(x - SCREEN.cx, z - SCREEN.cz); // toe toward screen
+            dummy.position.set(x, y, z);
+            dummy.rotation.set(0, yaw, 0);
+            dummy.updateMatrix();
+            seatMesh.setMatrixAt(idx, dummy.matrix);
+            pickMesh.setMatrixAt(idx, dummy.matrix);
+
+            // availability: ~40% sold, but keep the recommended seat free
+            const sold = rng() < 0.4 && !(r === 9 && s === 11);
+            col.setHex(TIER[tier].color).offsetHSL((rng() - 0.5) * 0.02, (rng() - 0.5) * 0.06, (rng() - 0.5) * 0.08);
+            if (sold) col.setHex(0x2a2d38).offsetHSL(0, 0, (rng() - 0.5) * 0.03);
+            seatMesh.setColorAt(idx, col);
+            baseColors[idx * 3] = col.r; baseColors[idx * 3 + 1] = col.g; baseColors[idx * 3 + 2] = col.b;
+
+            const id = idx + 1;
+            pickColAttr.setXYZ(idx, ((id >> 16) & 255) / 255, ((id >> 8) & 255) / 255, (id & 255) / 255);
+
+            meta.pos[idx * 3] = x; meta.pos[idx * 3 + 1] = y; meta.pos[idx * 3 + 2] = z;
+            meta.yaw[idx] = yaw; meta.row[idx] = r; meta.seat[idx] = s;
+            meta.tier[idx] = tier; meta.avail[idx] = sold ? 0 : 1;
+            idx++;
+          }
+        }
+        seatMesh.instanceMatrix.needsUpdate = true;
+        pickMesh.instanceMatrix.needsUpdate = true;
+        seatMesh.instanceColor.needsUpdate = true;
+      }
+      scene.add(seatMesh);
+
+      /* ---------- per-seat derived data ---------- */
+      const EYE_H = 1.15;
+      function eyeFor(i) {
+        return new THREE.Vector3(meta.pos[i * 3], meta.pos[i * 3 + 1] + EYE_H, meta.pos[i * 3 + 2]);
+      }
+      function seatScore(i) {
+        const eye = eyeFor(i);
+        const d = eye.distanceTo(screenCenter);
+        const idealD = 17;
+        const distPen = THREE.MathUtils.clamp(Math.abs(d - idealD) / idealD, 0, 1) * 24;
+        const centerPen = THREE.MathUtils.clamp(Math.abs(eye.x) / 11, 0, 1) * 14;
+        const horiz = Math.hypot(screenCenter.x - eye.x, screenCenter.z - eye.z);
+        const lookAngle = Math.atan2(screenCenter.y - eye.y, horiz); // + = looking up
+        const upPen = THREE.MathUtils.clamp((lookAngle - 0.12) / 0.4, 0, 1) * 16;
+        return Math.round(THREE.MathUtils.clamp(99 - distPen - centerPen - upPen, 45, 99));
+      }
+      function scoreLabel(s) {
+        return s >= 90 ? "Excellent view" : s >= 80 ? "Great view" : s >= 70 ? "Good view" : s >= 58 ? "Fair view" : "Restricted view";
+      }
+      function seatPrice(i) {
+        return TIER[meta.tier[i]].base;
+      }
+      function fmtPrice(n) {
+        return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      }
+      function seatLabel(i) {
+        return "Row " + ROW_LETTERS[meta.row[i]] + " · Seat " + (meta.seat[i] + 1);
+      }
+      function seatInfo(i) {
+        const score = seatScore(i);
+        return {
+          i, score, label: seatLabel(i), tier: TIER[meta.tier[i]].name,
+          price: seatPrice(i), avail: !!meta.avail[i],
+          scoreText: scoreLabel(score),
+        };
+      }
+
+      // recommended seat = highest score among available
+      let bestIdx = 0, bestScore = -1;
+      for (let i = 0; i < SEAT_COUNT; i++) {
+        if (!meta.avail[i]) continue;
+        const s = seatScore(i);
+        if (s > bestScore) { bestScore = s; bestIdx = i; }
+      }
+
+      /* ---------- GPU picking ---------- */
+      const pickRT = new THREE.WebGLRenderTarget(1, 1);
+      const pickBuf = new Uint8Array(4);
+      function pickAt(cx, cy) {
+        const dpr = renderer.getPixelRatio();
+        camera.setViewOffset(canvas.width, canvas.height, Math.floor(cx * dpr), Math.floor(cy * dpr), 1, 1);
+        renderer.setRenderTarget(pickRT);
+        renderer.render(pickScene, camera);
+        renderer.setRenderTarget(null);
+        camera.clearViewOffset();
+        renderer.readRenderTargetPixels(pickRT, 0, 0, 1, 1, pickBuf);
+        const id = (pickBuf[0] << 16) | (pickBuf[1] << 8) | pickBuf[2];
+        return id === 0 ? -1 : id - 1;
+      }
+
+      /* ---------- seat colouring ---------- */
+      const tmpC = new THREE.Color();
+      function paintSeat(i, r, g, b) { tmpC.setRGB(r, g, b); seatMesh.setColorAt(i, tmpC); seatMesh.instanceColor.needsUpdate = true; }
+      function restoreSeat(i) { paintSeat(i, baseColors[i * 3], baseColors[i * 3 + 1], baseColors[i * 3 + 2]); }
+
+      let hoverIdx = -1, selectedIdx = -1;
+      function setHover(i) {
+        if (i === hoverIdx) return;
+        if (hoverIdx >= 0 && hoverIdx !== selectedIdx) restoreSeat(hoverIdx);
+        hoverIdx = i;
+        if (i >= 0 && i !== selectedIdx && meta.avail[i]) paintSeat(i, 1.0, 0.95, 0.6);
+      }
+      function applySelection(i) {
+        if (selectedIdx >= 0) restoreSeat(selectedIdx);
+        selectedIdx = i;
+        if (i >= 0) paintSeat(i, 0.3, 1.0, 0.55);
+      }
+
+      /* ---------- selection glow ring ---------- */
+      const glowTex = canvasTexture(64, 64, (x, w, h) => {
+        const g = x.createRadialGradient(w / 2, h / 2, 4, w / 2, h / 2, w / 2);
+        g.addColorStop(0, "rgba(120,255,170,0.9)"); g.addColorStop(0.6, "rgba(120,255,170,0.25)"); g.addColorStop(1, "rgba(120,255,170,0)");
+        x.fillStyle = g; x.fillRect(0, 0, w, h);
+      });
+      const selGlow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true, opacity: 0, depthTest: false }));
+      selGlow.scale.set(2.4, 2.4, 1);
+      scene.add(selGlow);
+
+      /* ---------- UI refs ---------- */
+      const ui = {
+        panel: $("panel"), pLoc: $("p-loc"), pTier: $("p-tier"), pPrice: $("p-price"),
+        pScoreN: $("p-score").querySelector(".n"), pScoreL: $("p-score").querySelector(".l"),
+        pMeter: $("p-meter"), pTag: $("p-tag"), pImg: $("p-img"), pPh: $("p-ph"),
+        grab: $("p-grab"), suggest: $("p-suggest"),
+        backbar: $("backbar"), tip: $("tip"), toast: $("toast"),
+      };
+
+      function updatePanel(info, state) {
+        ui.pTag.style.display = state === "recommended" ? "block" : "none";
+        ui.pTag.textContent = "Recommended";
+        ui.pLoc.textContent = info.label;
+        ui.pTier.textContent = info.tier + (info.avail ? "" : " · SOLD OUT");
+        ui.pPrice.innerHTML = fmtPrice(info.price) + '<span class="u"> / seat</span>';
+        ui.pScoreN.textContent = info.score;
+        ui.pScoreL.textContent = info.scoreText;
+        ui.pMeter.style.width = info.score + "%";
+        ui.grab.disabled = !info.avail;
+        ui.grab.textContent = state === "confirmed" ? "✓ Seat selected" : "Select seat";
+      }
+
+      /* ---------- POV thumbnail capture ---------- */
+      function captureView(i) {
+        const eye = eyeFor(i);
+        const sp = camera.position.clone(), sq = camera.quaternion.clone(), sf = camera.fov;
+        camera.position.copy(eye);
+        camera.lookAt(screenCenter);
+        camera.fov = 54; camera.updateProjectionMatrix();
+        renderer.render(scene, camera);
+        const oc = document.createElement("canvas");
+        oc.width = 480; oc.height = 300;
+        oc.getContext("2d").drawImage(renderer.domElement, 0, 0, oc.width, oc.height);
+        ui.pImg.src = oc.toDataURL("image/jpeg", 0.72);
+        ui.pImg.classList.add("ready");
+        ui.pPh.style.display = "none";
+        camera.position.copy(sp); camera.quaternion.copy(sq); camera.fov = sf; camera.updateProjectionMatrix();
+      }
+
+      /* ---------- tooltip / toast ---------- */
+      let toastTimer = 0;
+      function toast(msg, ms) {
+        ui.toast.textContent = msg; ui.toast.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => ui.toast.classList.remove("show"), ms || 2600);
+      }
+      function showTip(x, y, i) {
+        const info = seatInfo(i);
+        ui.tip.innerHTML = info.avail
+          ? info.label + " · <b>" + fmtPrice(info.price) + "</b> · " + info.score + "% view"
+          : info.label + " · <b>Sold</b>";
+        ui.tip.style.left = x + "px"; ui.tip.style.top = y + "px";
+        ui.tip.style.opacity = "1";
+      }
+      function hideTip() { ui.tip.style.opacity = "0"; }
+
+      /* ---------- orbit controls (hand-rolled) ---------- */
+      const orbit = {
+        theta: Math.PI / 2, phi: 1.05, radius: 34,
+        thetaT: Math.PI / 2, phiT: 1.05, radiusT: 34,
+        target: new THREE.Vector3(0, 3.2, -4),
+      };
+      function applyOrbit() {
+        const sp = Math.sin(orbit.phi);
+        camera.position.set(
+          orbit.target.x + orbit.radius * sp * Math.cos(orbit.theta),
+          orbit.target.y + orbit.radius * Math.cos(orbit.phi),
+          orbit.target.z + orbit.radius * sp * Math.sin(orbit.theta)
+        );
+        camera.fov = 58; camera.updateProjectionMatrix();
+        camera.lookAt(orbit.target);
+      }
+
+      let mode = "orbit"; // orbit | fly | seat
+      let userInteracted = false;
+      const seatView = { eye: new THREE.Vector3(), yawBase: 0, pitchBase: 0, yawOff: 0, pitchOff: 0 };
+      let lastOrbit = { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius };
+
+      /* ---------- pointer handling ---------- */
+      let dragging = false, dragMoved = false, px = 0, py = 0;
+      canvas.addEventListener("pointerdown", (e) => {
+        dragging = true; dragMoved = false; px = e.clientX; py = e.clientY;
+        userInteracted = true; canvas.classList.add("dragging");
+        canvas.setPointerCapture(e.pointerId);
+      });
+      canvas.addEventListener("pointermove", (e) => {
+        if (dragging) {
+          const dx = e.clientX - px, dy = e.clientY - py;
+          if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
+          px = e.clientX; py = e.clientY;
+          if (mode === "orbit") {
+            orbit.thetaT -= dx * 0.005;
+            orbit.phiT = THREE.MathUtils.clamp(orbit.phiT - dy * 0.005, 0.22, 1.45);
+          } else if (mode === "seat") {
+            seatView.yawOff = THREE.MathUtils.clamp(seatView.yawOff - dx * 0.003, -0.7, 0.7);
+            seatView.pitchOff = THREE.MathUtils.clamp(seatView.pitchOff - dy * 0.003, -0.5, 0.5);
+          }
+        } else if (mode === "orbit") {
+          const now = performance.now();
+          if (now - lastHover > 40) { lastHover = now; doHover(e.clientX, e.clientY); }
+        }
+      });
+      let lastHover = 0;
+      function doHover(cx, cy) {
+        const i = pickAt(cx, cy);
+        setHover(i);
+        if (i >= 0) showTip(cx, cy, i); else hideTip();
+      }
+      function endDrag(e) {
+        if (!dragging) return;
+        dragging = false; canvas.classList.remove("dragging");
+        if (!dragMoved && mode === "orbit") {
+          const i = pickAt(e.clientX, e.clientY);
+          if (i >= 0 && meta.avail[i]) flyToSeat(i);
+          else if (i >= 0) toast("That seat is already sold", 2200);
+        }
+      }
+      canvas.addEventListener("pointerup", endDrag);
+      canvas.addEventListener("pointercancel", () => { dragging = false; canvas.classList.remove("dragging"); });
+      canvas.addEventListener("pointerleave", () => { setHover(-1); hideTip(); });
+      canvas.addEventListener("wheel", (e) => {
+        e.preventDefault();
+        if (mode !== "orbit") return;
+        userInteracted = true;
+        orbit.radiusT = THREE.MathUtils.clamp(orbit.radiusT * (e.deltaY > 0 ? 1.1 : 0.9), 14, 55);
+      }, { passive: false });
+
+      /* ---------- camera flight ---------- */
+      function flyToSeat(i) {
+        const info = seatInfo(i);
+        setHover(-1); hideTip();
+        applySelection(i);
+        updatePanel(info, "previewing");
+        ui.pImg.classList.remove("ready"); ui.pPh.style.display = "grid"; ui.pPh.textContent = "Flying to the seat…";
+        if (mode === "orbit") lastOrbit = { theta: orbit.theta, phi: orbit.phi, radius: orbit.radius };
+        mode = "fly";
+        const eye = eyeFor(i);
+        const p0 = camera.position.clone();
+        const startLook = new THREE.Vector3();
+        camera.getWorldDirection(startLook).multiplyScalar(30).add(camera.position);
+        const p1 = p0.clone().lerp(eye, 0.35); p1.y = Math.max(p0.y, eye.y) + 12;
+        const p2 = eye.clone(); p2.z += 5; p2.y += 4;
+        const curve = new THREE.CatmullRomCurve3([p0, p1, p2, eye], false, "catmullrom", 0.4);
+        const st = { t: 0 }, lp = new THREE.Vector3(), startFov = camera.fov;
+        gsap.to(st, {
+          t: 1, duration: REDUCED ? 0.6 : 2.8, ease: "power3.inOut",
+          onUpdate() {
+            curve.getPoint(st.t, camera.position);
+            lp.copy(startLook).lerp(screenCenter, THREE.MathUtils.smoothstep(st.t, 0.15, 0.9));
+            camera.lookAt(lp);
+            camera.fov = THREE.MathUtils.lerp(startFov, 54, THREE.MathUtils.smoothstep(st.t, 0.3, 1));
+            camera.updateProjectionMatrix();
+          },
+          onComplete() { enterSeatMode(info); },
+        });
+      }
+      function enterSeatMode(info) {
+        mode = "seat";
+        canvas.classList.add("seatmode");
+        seatView.eye.copy(eyeFor(info.i));
+        const d = screenCenter.clone().sub(seatView.eye);
+        seatView.yawBase = Math.atan2(d.x, d.z);
+        seatView.pitchBase = Math.asin(THREE.MathUtils.clamp(d.y / d.length(), -1, 1));
+        seatView.yawOff = 0; seatView.pitchOff = 0;
+        camera.fov = 54; camera.updateProjectionMatrix();
+        ui.backbar.classList.add("show");
+        ui.panel.classList.add("hidden"); // full-screen view: hide the seat info card
+        updatePanel(info, "previewing");
+        captureView(info.i);
+        toast("Drag to look around · Esc to go back", 3200);
+      }
+      function exitSeatMode() {
+        if (mode !== "seat" && mode !== "fly") return;
+        mode = "fly";
+        canvas.classList.remove("seatmode");
+        ui.backbar.classList.remove("show");
+        ui.panel.classList.remove("hidden"); // restore the info card when leaving the seat
+        orbit.theta = orbit.thetaT = lastOrbit.theta;
+        orbit.phi = orbit.phiT = lastOrbit.phi;
+        orbit.radius = orbit.radiusT = lastOrbit.radius;
+        const sp = Math.sin(lastOrbit.phi);
+        const dest = new THREE.Vector3(
+          orbit.target.x + lastOrbit.radius * sp * Math.cos(lastOrbit.theta),
+          orbit.target.y + lastOrbit.radius * Math.cos(lastOrbit.phi),
+          orbit.target.z + lastOrbit.radius * sp * Math.sin(lastOrbit.theta)
+        );
+        const p0 = camera.position.clone();
+        const p1 = p0.clone().lerp(dest, 0.5); p1.y = Math.max(p0.y, dest.y) + 10;
+        const curve = new THREE.CatmullRomCurve3([p0, p1, dest], false, "catmullrom", 0.4);
+        const startLook = new THREE.Vector3();
+        camera.getWorldDirection(startLook).multiplyScalar(30).add(camera.position);
+        const st = { t: 0 }, lp = new THREE.Vector3(), startFov = camera.fov;
+        gsap.to(st, {
+          t: 1, duration: REDUCED ? 0.5 : 1.8, ease: "power3.inOut",
+          onUpdate() {
+            curve.getPoint(st.t, camera.position);
+            lp.copy(startLook).lerp(orbit.target, THREE.MathUtils.smoothstep(st.t, 0.1, 0.85));
+            camera.lookAt(lp);
+            camera.fov = THREE.MathUtils.lerp(startFov, 58, st.t);
+            camera.updateProjectionMatrix();
+          },
+          onComplete() { mode = "orbit"; },
+        });
+      }
+
+      /* ---------- buttons / keyboard ---------- */
+      ui.grab.addEventListener("click", () => {
+        if (selectedIdx < 0 || !meta.avail[selectedIdx]) return;
+        updatePanel(seatInfo(selectedIdx), "confirmed");
+        toast(seatLabel(selectedIdx) + " selected (demo)", 2800);
+      });
+      $("bk-exit").addEventListener("click", exitSeatMode);
+      ui.suggest.addEventListener("click", () => { if (mode === "orbit") flyToSeat(bestIdx); });
+      addEventListener("keydown", (e) => {
+        if (e.key === "Escape") exitSeatMode();
+        else if (e.key === "Enter" && selectedIdx >= 0 && meta.avail[selectedIdx]) ui.grab.click();
+      });
+
+      /* ---------- minimap (top-down seat map) ---------- */
+      const mini = $("mini"), mctx = mini.getContext("2d");
+      let minX=1e9,maxX=-1e9,minZ=1e9,maxZ=-1e9;
+      for (let i=0;i<SEAT_COUNT;i++){const x=meta.pos[i*3],z=meta.pos[i*3+2];if(x<minX)minX=x;if(x>maxX)maxX=x;if(z<minZ)minZ=z;if(z>maxZ)maxZ=z;}
+      function drawMini() {
+        const W = mini.width, H = mini.height, pad = 10;
+        mctx.clearRect(0, 0, W, H);
+        // screen bar at top
+        mctx.fillStyle = "#5b8cff"; mctx.fillRect(pad, 4, W - pad * 2, 4);
+        mctx.fillStyle = "#6a7089"; mctx.font = "8px sans-serif"; mctx.textAlign = "center";
+        mctx.fillText("SCREEN", W / 2, 3 + 8);
+        const spanX = maxX - minX || 1, spanZ = maxZ - minZ || 1;
+        for (let i = 0; i < SEAT_COUNT; i++) {
+          const x = meta.pos[i * 3], z = meta.pos[i * 3 + 2];
+          const mx = pad + ((x - minX) / spanX) * (W - pad * 2);
+          const my = 16 + ((z - minZ) / spanZ) * (H - 24);
+          if (i === selectedIdx) mctx.fillStyle = "#37d67a";
+          else if (!meta.avail[i]) mctx.fillStyle = "#2a2d38";
+          else mctx.fillStyle = ["#8a2b2b", "#b8863b", "#3b6db8"][meta.tier[i]];
+          const sz = i === selectedIdx ? 4 : 2.6;
+          mctx.fillRect(mx - sz / 2, my - sz / 2, sz, sz);
+        }
+      }
+
+      /* ---------- resize / adaptive quality ---------- */
+      addEventListener("resize", () => {
+        camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+        renderer.setSize(innerWidth, innerHeight);
+      });
+      let fpsAcc = 0, fpsN = 0, fpsCheck = 0;
+      function adaptQuality(dt, now) {
+        fpsAcc += dt; fpsN++;
+        if (now - fpsCheck < 2500) return;
+        fpsCheck = now;
+        const fps = fpsN / Math.max(1e-4, fpsAcc); fpsAcc = 0; fpsN = 0;
+        const pr = renderer.getPixelRatio();
+        if (fps < 40 && pr > 0.75) renderer.setPixelRatio(Math.max(0.75, pr - 0.25));
+        else if (fps > 75 && pr < Math.min(2, window.devicePixelRatio)) renderer.setPixelRatio(Math.min(2, window.devicePixelRatio, pr + 0.25));
+      }
+
+      /* ---------- main loop ---------- */
+      const clock = new THREE.Clock();
+      let firstFrame = true;
+      function animate() {
+        requestAnimationFrame(animate);
+        const dt = Math.min(0.05, clock.getDelta()), t = clock.elapsedTime, now = performance.now();
+
+        if (mode === "orbit") {
+          if (!userInteracted && !REDUCED) orbit.thetaT += dt * 0.04;
+          const k = REDUCED ? 1 : Math.min(1, dt * 6);
+          orbit.theta += (orbit.thetaT - orbit.theta) * k;
+          orbit.phi += (orbit.phiT - orbit.phi) * k;
+          orbit.radius += (orbit.radiusT - orbit.radius) * k;
+          applyOrbit();
+        } else if (mode === "seat") {
+          const swayY = REDUCED ? 0 : Math.sin(t * 0.9) * 0.01 + Math.sin(t * 2.3) * 0.004;
+          const swayYaw = REDUCED ? 0 : Math.sin(t * 0.42) * 0.005;
+          camera.position.set(seatView.eye.x, seatView.eye.y + swayY, seatView.eye.z);
+          const yaw = seatView.yawBase + seatView.yawOff + swayYaw;
+          const pitch = THREE.MathUtils.clamp(seatView.pitchBase + seatView.pitchOff, -1.2, 1.2);
+          const look = new THREE.Vector3(
+            Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch)
+          ).add(camera.position);
+          camera.lookAt(look);
+        }
+
+        // selection glow
+        if (selectedIdx >= 0 && mode !== "seat") {
+          selGlow.position.set(meta.pos[selectedIdx * 3], meta.pos[selectedIdx * 3 + 1] + 0.6, meta.pos[selectedIdx * 3 + 2]);
+          selGlow.material.opacity = 0.35 + 0.2 * Math.sin(t * 3);
+          const g = 2.3 + 0.3 * Math.sin(t * 3); selGlow.scale.set(g, g, 1);
+        } else selGlow.material.opacity = 0;
+
+        drawMini();
+        adaptQuality(dt, now);
+        renderer.render(scene, camera);
+
+        if (firstFrame) {
+          firstFrame = false;
+          setTimeout(() => {
+            captureView(bestIdx);
+            $("loader").classList.add("hide");
+            toast("Click any seat to see the screen from there", 3600);
+          }, 80);
+        }
+      }
+
+      /* ---------- boot ---------- */
+      applySelection(bestIdx);
+      updatePanel(seatInfo(bestIdx), "recommended");
+      applyOrbit();
+      animate();
+    </script>
+  </body>
+</html>
