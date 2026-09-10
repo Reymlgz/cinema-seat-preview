@@ -1,5 +1,7 @@
 # CineView — Interactive 3D Cinema Seat Preview
 
+**[▶ Live demo — cinema-seat-preview.pages.dev](https://cinema-seat-preview.pages.dev/)**
+
 Pick any seat in a 3D auditorium and the camera flies into it, giving you a first-person view of the
 screen from that exact chair — so you can judge distance, angle and sightline before buying. Price,
 row/seat label and a computed *view score* update live.
@@ -14,9 +16,12 @@ tickets are sold.
 
 ## Run it
 
-The whole app is a single self-contained `index.html` (Three.js + GSAP from CDN, no build step).
-It still needs to be served over HTTP — the screen texture loads `references/images/*.jpg`, which
-browsers block from `file://`:
+Easiest is the [live demo](https://cinema-seat-preview.pages.dev/) — no install, just a browser
+with WebGL.
+
+To run it locally: the whole app is a single self-contained `index.html` (Three.js + GSAP from CDN,
+no build step). It still needs to be served over HTTP — the screen texture loads
+`references/images/*.jpg`, which browsers block from `file://`:
 
 ```bash
 python3 -m http.server 8000   # from the project root
@@ -129,10 +134,12 @@ Dependencies are loaded from CDN at runtime:
 
 ## Deploying
 
-Static hosting, no build command. On Cloudflare Pages: connect the repo, leave **Build command**
-empty, set **Build output directory** to the folder holding `index.html`. For a client-facing
-deploy, consider vendoring `three.min.js` and `gsap.min.js` into the repo so a CDN hiccup can't
-break the demo.
+Live on Cloudflare Pages at **<https://cinema-seat-preview.pages.dev/>**, deployed straight from
+GitHub on every push.
+
+Static hosting, no build command: connect the repo, leave **Build command** empty, and set **Build
+output directory** to the folder holding `index.html`. For a client-facing deploy, consider
+vendoring `three.min.js` and `gsap.min.js` into the repo so a CDN hiccup can't break the demo.
 
 ## Tweaking it
 
